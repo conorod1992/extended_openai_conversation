@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from .context_usage_hardening import RequestTokenMeasurements, _capture_provider_usage
+from .provider_errors import ProviderStreamError
 from .provider_output_budget import responses_array
 
 
@@ -78,7 +79,10 @@ async def completed_chat_chunks(
 ) -> AsyncIterator[Any]:
     """Emit one completed choice and its usage through the existing chat parser."""
     _capture_provider_usage(request_usage, getattr(response, "usage", None))
-    for choice in getattr(response, "choices", ()):
+    response_choices = getattr(response, "choices", ())
+    if len(response_choices) > 1:
+        raise ProviderStreamError("Expected exactly one Chat Completions choice")
+    for choice in response_choices:
         message = choice.message
         tool_calls = [
             SimpleNamespace(index=index, id=tool.id, function=tool.function)
@@ -93,7 +97,13 @@ async def completed_chat_chunks(
             function_call=getattr(message, "function_call", None),
         )
         yield SimpleNamespace(
-            choices=[SimpleNamespace(delta=delta, finish_reason=choice.finish_reason)],
+            choices=[
+                SimpleNamespace(
+                    index=getattr(choice, "index", None),
+                    delta=delta,
+                    finish_reason=choice.finish_reason,
+                )
+            ],
             usage=None,
         )
     if getattr(response, "usage", None) is not None:

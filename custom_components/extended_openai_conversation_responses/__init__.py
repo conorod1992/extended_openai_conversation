@@ -349,7 +349,9 @@ async def async_setup_entry(
                 try:
                     await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
                 finally:
-                    await async_unload_templates(hass, entry.entry_id)
+                    await async_settle_owned_operation(
+                        _async_retire_runtime_owners(hass, entry)
+                    )
         finally:
             del entry.runtime_data
         raise
@@ -376,53 +378,54 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     for platform in platforms:
         platform.async_unsub_polling()
 
-    async def retire_runtime_owners() -> None:
-        from .agent_maintenance import get_agent_maintenance_gate
-
-        hass_data = getattr(hass, "data", None)
-        subentries = getattr(entry, "subentries", None)
-        if isinstance(hass_data, dict) and subentries is not None:
-            from .management_function_repair import discard_persisted_config_projection
-
-            runtimes = hass_data.get(_REQUEST_RULE_RUNTIMES, {})
-            managers = hass_data.get(_REQUEST_RULE_MANAGERS, {})
-            owners = [
-                (
-                    key := (entry.entry_id, subentry.subentry_id),
-                    managers.get(key),
-                    runtimes.get(key),
-                    subentry,
-                )
-                for subentry in subentries.values()
-            ]
-            for key, manager, runtime, subentry in owners:
-                # Existing restore/rollback owns its participant until the
-                # exclusive lease settles. This does not upgrade a caller's
-                # ordinary shared lease, as a native reload action may hold one.
-                await get_agent_maintenance_gate(hass, *key).async_wait_idle()
-                if manager is not None:
-                    try:
-                        # Fence delayed validation and drain physical writes before
-                        # a replacement Store/manager can publish the next generation.
-                        await manager.async_retire()
-                    finally:
-                        if managers.get(key) is manager:
-                            managers.pop(key)
-                if runtime is not None and runtimes.get(key) is runtime:
-                    runtimes.pop(key)
-                discard_persisted_config_projection(subentry)
-        await async_unload_templates(hass, entry.entry_id)
-
     # Platforms have unloaded. Cancellation must not abandon a retired manager
     # in the cache or allow its pending write to race a replacement generation.
     async def retire_all_owners() -> None:
         try:
             await _async_release_global_effects(hass, entry.entry_id)
         finally:
-            await retire_runtime_owners()
+            await _async_retire_runtime_owners(hass, entry)
 
     await async_settle_owned_operation(retire_all_owners())
     return True
+
+
+async def _async_retire_runtime_owners(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    from .agent_maintenance import get_agent_maintenance_gate
+
+    hass_data = getattr(hass, "data", None)
+    subentries = getattr(entry, "subentries", None)
+    if isinstance(hass_data, dict) and subentries is not None:
+        from .management_function_repair import discard_persisted_config_projection
+
+        runtimes = hass_data.get(_REQUEST_RULE_RUNTIMES, {})
+        managers = hass_data.get(_REQUEST_RULE_MANAGERS, {})
+        owners = [
+            (
+                key := (entry.entry_id, subentry.subentry_id),
+                managers.get(key),
+                runtimes.get(key),
+                subentry,
+            )
+            for subentry in subentries.values()
+        ]
+        for key, manager, runtime, subentry in owners:
+            # Existing restore/rollback owns its participant until the
+            # exclusive lease settles. This does not upgrade a caller's
+            # ordinary shared lease, as a native reload action may hold one.
+            await get_agent_maintenance_gate(hass, *key).async_wait_idle()
+            if manager is not None:
+                try:
+                    # Fence delayed validation and drain physical writes before
+                    # a replacement Store/manager can publish the next generation.
+                    await manager.async_retire()
+                finally:
+                    if managers.get(key) is manager:
+                        managers.pop(key)
+            if runtime is not None and runtimes.get(key) is runtime:
+                runtimes.pop(key)
+            discard_persisted_config_projection(subentry)
+    await async_unload_templates(hass, entry.entry_id)
 
 
 async def _async_suspend_global_effects(hass: HomeAssistant) -> None:

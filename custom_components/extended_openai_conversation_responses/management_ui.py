@@ -1638,12 +1638,14 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             validation_started = perf_counter()
             state, state_cache_hit = repair_state_for_projection(projection)
             if state is None:
-                if err.field not in {
+                if err.field.split("[", 1)[0] not in {
                     "max_tokens",
+                    "max_function_calls_per_conversation",
                     "temperature",
                     "top_p",
                     "service_tier",
                     "reasoning_effort",
+                    "speech_regex_replacements",
                 }:
                     raise
                 # This projection is for repairing saved values in the editor.

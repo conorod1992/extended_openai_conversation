@@ -334,6 +334,7 @@ def render_effective_prompt(
     temporary_scope_available: bool = True,
     archive_available: bool = True,
     archive_session_available: bool = True,
+    function_calls_available: bool = True,
 ) -> EffectivePrompt:
     """Render and assemble the production system prompt in deterministic order."""
     if guest_policy is not None and guest_policy.guest_active:
@@ -371,7 +372,9 @@ def render_effective_prompt(
         guest_policy=policy,
     )
     retrieval_safety_added = False
-    function_tools_available = function_call_budget_available(options)
+    function_tools_available = (
+        function_calls_available and function_call_budget_available(options)
+    )
 
     if policy.guest_active:
         sections.append(

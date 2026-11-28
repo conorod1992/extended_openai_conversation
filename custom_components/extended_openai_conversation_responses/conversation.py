@@ -1653,24 +1653,29 @@ class ExtendedOpenAIAgentEntity(
             retrieved_memories,
             temporary_memories,
         )
-        prompt_without_skills = None
+        last_prompt_variant = (True, True)
 
         def prompt_for_admitted_tools(
             tools: list[dict[str, Any]], admission: FunctionToolAdmission
         ) -> str:
-            nonlocal prompt_without_skills
-            if self._skill_loader_reachable(tools, admission):
-                return system_prompt
-            if prompt_without_skills is None:
-                prompt_without_skills = self._build_system_prompt(
+            nonlocal last_prompt_variant, system_prompt
+            includes_skills = current_snapshot().require_positive_delay or (
+                not getattr(self, "skills", None)
+                or self._skill_loader_reachable(tools, admission)
+            )
+            key = (includes_skills, admission.function_calls_available)
+            if key != last_prompt_variant:
+                system_prompt = self._build_system_prompt(
                     exposed_entities,
                     llm_context,
                     user_input,
                     retrieved_memories,
                     temporary_memories,
-                    include_skills=False,
+                    include_skills=includes_skills,
+                    function_calls_available=admission.function_calls_available,
                 )
-            return prompt_without_skills
+                last_prompt_variant = key
+            return system_prompt
 
         # Set system prompt in chat log
         chat_log.content[0] = conversation.SystemContent(content=system_prompt)
@@ -1704,12 +1709,7 @@ class ExtendedOpenAIAgentEntity(
                     self._reset_loaded_function_groups if group_session_active else None
                 ),
                 request_options=request_options,
-                prompt_for_admitted_tools=(
-                    prompt_for_admitted_tools
-                    if getattr(self, "skills", None)
-                    and not current_snapshot().require_positive_delay
-                    else None
-                ),
+                prompt_for_admitted_tools=prompt_for_admitted_tools,
             )
             continuation_accepted = True
         except asyncio.CancelledError:
@@ -1764,7 +1764,7 @@ class ExtendedOpenAIAgentEntity(
             ),
             continue_conversation=_resolve_continue_conversation(
                 continue_mode,
-                original_text.strip().endswith(("?", ";", "ï¼Ÿ")),
+                original_text.strip().endswith(("?", ";", "\uff1f")),
                 conditional_decision,
             ),
         )
@@ -2043,6 +2043,7 @@ class ExtendedOpenAIAgentEntity(
         temporary_memories: list[TemporaryMemoryRecord] | None = None,
         *,
         include_skills: bool = True,
+        function_calls_available: bool = True,
     ) -> str:
         """Build system prompt with exposed entities and skills."""
         started = time.monotonic()
@@ -2076,6 +2077,7 @@ class ExtendedOpenAIAgentEntity(
             archive_available=self._archive_reads_available
             and (scope is None or scope.allows_retention),
             archive_session_available=self._archive_session_available,
+            function_calls_available=function_calls_available,
         )
         record_prompt_render(effective, render_started)
         _PROMPT_CACHE_CONTEXT.set(prompt_cache_context(effective, self.subentry.data))

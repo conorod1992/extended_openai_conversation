@@ -314,7 +314,15 @@ def parse_ai_task_structured_response(
         _LOGGER.error("Failed to parse structured AI Task JSON response")
         raise HomeAssistantError("Error with structured response") from None
     if original_schema is not None:
-        data = _omit_optional_nulls(data, original_schema)
+        projected = _omit_optional_nulls(data, original_schema)
+        if structure is None:
+            return projected
+        try:
+            return _validate_structured_response(projected, structure)
+        except HomeAssistantError:
+            # The converted schema can select another branch. Revisit the
+            # original output so caller-required null values remain available.
+            pass
     return _validate_with_caller_cleanup(data, structure)
 
 
@@ -516,13 +524,15 @@ class ExtendedOpenAITaskEntity(
         # its schema snapshot. Large arrays must not stall HA's event loop.
         phase = "decode model JSON"
         try:
-            data = await asyncio.to_thread(
-                parse_ai_task_structured_response,
-                text,
-                original_schema=original_schema,
+            raw = await asyncio.to_thread(parse_ai_task_structured_response, text)
+            projected = await asyncio.to_thread(
+                _omit_optional_nulls, raw, original_schema
             )
             phase = "validate the requested structure"
-            data = _validate_with_caller_cleanup(data, task.structure)
+            try:
+                data = _validate_structured_response(projected, task.structure)
+            except HomeAssistantError:
+                data = _validate_with_caller_cleanup(raw, task.structure)
             phase = "encode the validated result"
             await asyncio.to_thread(_require_serializable_response, data)
         except HomeAssistantError as err:

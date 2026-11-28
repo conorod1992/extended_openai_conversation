@@ -474,7 +474,7 @@ def _validate_schema_node(
                 raise _schema_error(f"pattern at `{path}` must be a string")
             try:
                 re.compile(pattern)
-            except re.error as err:
+            except (re.error, OverflowError, RecursionError) as err:
                 raise _schema_error(f"invalid pattern at `{path}`: {err}") from err
 
     if expected_types.intersection({"number", "integer"}):
@@ -482,11 +482,15 @@ def _validate_schema_node(
             if keyword not in schema:
                 continue
             limit = schema[keyword]
-            if (
-                isinstance(limit, bool)
-                or not isinstance(limit, (int, float))
-                or not math.isfinite(float(limit))
-            ):
+            try:
+                finite = (
+                    not isinstance(limit, bool)
+                    and isinstance(limit, (int, float))
+                    and math.isfinite(limit)
+                )
+            except OverflowError:
+                finite = False
+            if not finite:
                 raise _schema_error(f"{keyword} at `{path}` must be a finite number")
         _validate_numeric_bound_order(schema, path)
 

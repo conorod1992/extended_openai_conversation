@@ -66,10 +66,12 @@ from .provider_errors import (
     request_reauthentication,
 )
 from .request import (
+    async_capacity_ha_snapshot,
     auxiliary_output_token_limit,
     build_provider_request_snapshot,
     conversation_tools_required,
     request_model_capabilities,
+    validate_runtime_readiness,
 )
 from .skill_availability import skill_loader_status
 from .skills import SkillManager
@@ -262,9 +264,37 @@ async def async_test_agent(
     checks.append(
         _check("Configuration", "Passed", f"{function_count} tool schemas valid")
     )
+    groups = []
+    group_error = None
+    if getattr(subentry, "subentry_type", "conversation") == "conversation":
+        try:
+            groups = validate_function_groups(
+                subentry.data.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
+                configured_tools,
+            )
+        except Exception as err:
+            group_error = err
+            checks.append(_check("Function Groups", "Failed", str(err)))
+        else:
+            try:
+                validate_runtime_readiness(
+                    subentry.data,
+                    entry.data,
+                    client=client,
+                    ha_snapshot=(
+                        await async_capacity_ha_snapshot(hass, subentry.data, None)
+                        if any(is_ha_tool(tool) for tool in configured_tools)
+                        else None
+                    ),
+                    validated_catalogue=(configured_tools, groups),
+                )
+            except HomeAssistantError as err:
+                checks.append(_check("Function Tool availability", "Failed", str(err)))
     try:
         guest_mode = get_loaded_guest_mode(hass, entry.entry_id, subentry.subentry_id)
-        if guest_mode is None:
+        if guest_mode is None or not getattr(
+            guest_mode, "authoritative_available", True
+        ):
             guest_mode = await async_get_guest_mode(
                 hass, entry.entry_id, subentry.subentry_id
             )
@@ -309,12 +339,10 @@ async def async_test_agent(
     selected_skills = list(subentry.data.get(CONF_SKILLS, []) or [])
     if not selected_skills:
         checks.append(_check("Skills", "Passed", "Disabled"))
+    elif group_error is not None:
+        checks.append(_check("Skills", "Failed", str(group_error)))
     else:
         try:
-            groups = validate_function_groups(
-                subentry.data.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
-                configured_tools,
-            )
             loader_status = skill_loader_status(
                 selected_skills,
                 configured_tools,

@@ -273,10 +273,22 @@ def _normalize_function_result(
                 )
             ancestors = _ancestors | {id(result)}
             if isinstance(result, dict):
-                normalized = {
-                    str(key): _normalize_function_result(value, _ancestors=ancestors)
-                    for key, value in result.items()
+                from .strict_json import has_surrogate
+
+                normalized = {}
+                reserved = {
+                    key
+                    for key in result
+                    if isinstance(key, str) and not has_surrogate(key)
                 }
+                for key, value in result.items():
+                    target = _function_result_text(key)
+                    if not isinstance(key, str) or target != key:
+                        while target in reserved or target in normalized:
+                            target += "_"
+                    normalized[target] = _normalize_function_result(
+                        value, _ancestors=ancestors
+                    )
                 if isinstance(result, BackendExecutionFailure):
                     return BackendExecutionFailure(normalized)
                 if isinstance(result, ExecutionFailure):
@@ -286,8 +298,14 @@ def _normalize_function_result(
                 _normalize_function_result(value, _ancestors=ancestors)
                 for value in result
             ]
-        return str(result)
+        return _function_result_text(result)
     return result
+
+
+def _function_result_text(value: Any) -> str:
+    from .strict_json import replace_surrogates
+
+    return replace_surrogates(str(value))
 
 
 def _schema_explicitly_allows_null(schema: dict[str, Any]) -> bool:
@@ -329,11 +347,19 @@ def _schema_explicitly_allows_null(schema: dict[str, Any]) -> bool:
 
 def _make_schema_nullable(schema: dict[str, Any]) -> None:
     """Make one property schema nullable without assuming a direct type field."""
-    if _schema_explicitly_allows_null(schema):
+    has_reference = any(
+        key in schema for key in ("$ref", "$dynamicRef", "$recursiveRef")
+    )
+    if not has_reference and _schema_explicitly_allows_null(schema):
         return
 
-    if not any(
-        keyword in schema for keyword in (*_SCHEMA_COMPOSITION_KEYS, "enum", "const")
+    if not has_reference and not any(
+        keyword in schema
+        for keyword in (
+            *_SCHEMA_COMPOSITION_KEYS,
+            "enum",
+            "const",
+        )
     ):
         schema_type = schema.get("type")
         if isinstance(schema_type, str):
@@ -2504,6 +2530,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     error_type="invalid_event_sequence",
                 )
             choice = chunk.choices[0]
+            if len(chunk.choices) != 1 or getattr(choice, "index", 0) not in (None, 0):
+                await async_recover_trailing_usage(result, request_usage)
+                raise ProviderStreamError(
+                    "Provider returned multiple or inconsistent completion choices",
+                    error_type="invalid_event_sequence",
+                )
             delta = getattr(choice, "delta", None)
             finish_reason = choice.finish_reason
             if delta is None:
@@ -2801,15 +2833,26 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             )
                         if not message.opened:
                             yield {"role": "assistant"}
-                        select_output(item)
+                        if (
+                            getattr(item, "phase", None) is not None
+                            or not message.opened
+                        ):
+                            select_output(item)
                         for text in message.complete(item):
                             yield {"content": text}
                         # Preserve native replay only when the provider supplied
                         # the message body. Legacy markers often carry no body.
                         if getattr(item, "content", None) is not None:
                             yield {"native": item}
+                        elif message.phase == "commentary":
+                            yield {"native": {"type": "message", "phase": "commentary"}}
                         message = ResponseMessageText()
                     elif item_type == "function_call":
+                        if getattr(item, "status", None) not in (None, "completed"):
+                            raise ProviderStreamError(
+                                "Provider returned an unfinished Function Tool call",
+                                error_type="invalid_event_sequence",
+                            )
                         try:
                             raw_args = item.arguments
                             arguments = (

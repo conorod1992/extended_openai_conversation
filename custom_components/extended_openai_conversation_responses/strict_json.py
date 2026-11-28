@@ -19,6 +19,11 @@ def has_surrogate(value: str) -> bool:
     return not value.isascii() and _SURROGATE.search(value) is not None
 
 
+def replace_surrogates(value: str) -> str:
+    """Make malformed UTF-8 code points visible without emitting them."""
+    return _SURROGATE.sub(lambda match: f"\\u{ord(match[0]):04x}", value)
+
+
 def join_surrogate_escapes(value: str) -> str:
     """Join correctly paired code units from a decoder that leaves them separate."""
     if not has_surrogate(value):

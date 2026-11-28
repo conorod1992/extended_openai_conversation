@@ -288,7 +288,10 @@ def _has_optional_or_open_properties(schema: Any) -> bool:
             additional is True
             or isinstance(additional, dict)
             or node.get("patternProperties")
-            or (is_object and not properties and "additionalProperties" not in node)
+            or (
+                (is_object or isinstance(properties, dict))
+                and "additionalProperties" not in node
+            )
         ):
             return True
         if isinstance(properties, dict):
@@ -987,6 +990,8 @@ def validate_runtime_readiness(
     previous_model_capabilities: Mapping[str, Any] | None = None,
     reserve_ha_tools: bool = False,
     responses_required: bool = False,
+    validated_catalogue: tuple[list[dict[str, Any]], list[dict[str, Any]]]
+    | None = None,
 ) -> ProviderRequestSnapshot:
     """Validate the initial Conversation catalogue for supported request scopes.
 
@@ -1026,13 +1031,20 @@ def validate_runtime_readiness(
     # Routes without a known tool limit need no catalogue traversal here.
     if snapshot.tool_limit is None:
         return snapshot
-    state = function_configuration_repair_state(dict(options))
-    configured = state.valid if state else configured_function_tools_from_data(options)
-    groups = (
-        state.groups
-        if state
-        else validate_function_groups(options.get(CONF_FUNCTION_GROUPS, []), configured)
-    )
+    if validated_catalogue is not None:
+        configured, groups = validated_catalogue
+    else:
+        state = function_configuration_repair_state(dict(options))
+        configured = (
+            state.valid if state else configured_function_tools_from_data(options)
+        )
+        groups = (
+            state.groups
+            if state
+            else validate_function_groups(
+                options.get(CONF_FUNCTION_GROUPS, []), configured
+            )
+        )
     budget_available = function_call_budget_available(options)
     reserve_configured_ha_tools = reserve_ha_tools
     if ha_snapshot is not None:

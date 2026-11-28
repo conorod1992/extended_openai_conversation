@@ -80,6 +80,35 @@ def _item_identity(item: Any) -> tuple[Any, ...]:
     )
 
 
+def _reconcile_item_metadata(streamed: Any, terminal: Any) -> None:
+    """Retain terminal details alongside the validated streamed item body."""
+    kind = getattr(terminal, "type", None)
+    if kind == "web_search_call":
+        status = getattr(terminal, "status", None)
+        prior_status = getattr(streamed, "status", None)
+        if prior_status and status and prior_status != status:
+            raise _malformed("conflicting hosted search status")
+        action = getattr(terminal, "action", None)
+        prior_action = getattr(streamed, "action", None)
+        if action is not None and prior_action is not None:
+            for field in ("type", "query", "url", "pattern"):
+                before = getattr(prior_action, field, None)
+                after = getattr(action, field, None)
+                if before is not None and after is not None and before != after:
+                    raise _malformed("conflicting hosted search action")
+        if action is not None:
+            streamed.action = action
+        if status is not None:
+            streamed.status = status
+    elif kind == "message":
+        streamed_parts = getattr(streamed, "content", None) or ()
+        terminal_parts = getattr(terminal, "content", None) or ()
+        for before, after in zip(streamed_parts, terminal_parts, strict=True):
+            annotations = getattr(after, "annotations", None)
+            if annotations:
+                before.annotations = annotations
+
+
 @dataclass
 class _IndexedContentEvent:
     """Keep the provider's event intact while associating it with a known item."""
@@ -98,6 +127,7 @@ class _OutputItem:
     item_id: str | None = None
     signature: tuple[Any, ...] | None = None
     completion: tuple[Any, ...] | None = None
+    completed_item: Any = None
     arguments: str | None = None
     arguments_done: bool = False
     opening: Any = None
@@ -176,6 +206,7 @@ class _OutputItem:
         self.arguments = arguments
         self.arguments_done = self.done = True
         self.completion = _item_identity(item)
+        self.completed_item = item
 
     def check_arguments(self, arguments: str | None) -> None:
         if self.arguments is not None and self.arguments != arguments:
@@ -291,12 +322,14 @@ class ResponseMessageText:
 
     def complete(self, item: Any) -> Iterator[str]:
         """Reconcile snapshots before emitting the remaining parts in order."""
+        content = getattr(item, "content", None)
         phase = getattr(item, "phase", None)
+        if phase is None and content is None:
+            phase = self.phase
         if (self.phase == "commentary" and phase != "commentary") or (
             self.phase == "final_answer" and phase not in {None, "final_answer"}
         ):
             raise _malformed("conflicting assistant message phase")
-        content = getattr(item, "content", None)
         if content is not None:
             if self.unindexed and len(content) > 1:
                 raise _malformed("unindexed text belongs to an ambiguous message part")
@@ -403,6 +436,7 @@ async def ordered_output_events(
     legacy_message_active = False
     implicit_legacy_text = False
     legacy_completions: dict[str, _OutputItem] = {}
+    legacy_native: list[Any] = []
     last_legacy_completed: _OutputItem | None = None
     legacy_items: list[tuple[Any, ...]] = []
     legacy_output_seen = False
@@ -513,6 +547,7 @@ async def ordered_output_events(
                     recovered = SimpleNamespace(type=_DONE, item=final)
                     budget.responses_event(recovered)
                     legacy_items.append(_item_identity(final))
+                    legacy_native.append(final)
                 if output:
                     if items or legacy_output_seen:
                         completed = [
@@ -525,6 +560,15 @@ async def ordered_output_events(
                             raise _malformed(
                                 "terminal output conflicts with streamed items"
                             )
+                        completed_native = [
+                            items[index].completed_item for index in range(next_index)
+                        ]
+                        completed_native.extend(legacy_native)
+                        for streamed, terminal in zip(
+                            completed_native, output, strict=True
+                        ):
+                            if streamed is not terminal:
+                                _reconcile_item_metadata(streamed, terminal)
                     else:
                         # Local tool dispatch requires item lifecycle evidence.
                         # A terminal-only response can recover assistant text/refusal.
@@ -635,6 +679,7 @@ async def ordered_output_events(
                     assert legacy.completion is not None
                     advance_message_boundary(legacy.completion)
                     legacy_items.append(legacy.completion)
+                    legacy_native.append(legacy.completed_item)
                     legacy = _OutputItem()
                     legacy_start = legacy_message_active = implicit_legacy_text = False
                 else:

@@ -2361,11 +2361,6 @@ def _validate_ha_action(value: Any) -> dict[str, Any]:
         )
     domain = _clean(value.get("domain"), 64, "domain")
     service = _clean(value.get("service"), 64, "service")
-    result = {
-        "action": f"{domain}.{service}",
-        "target": _migrate_slot_templates(dict(value.get("target") or {})),
-        "data": _migrate_slot_templates(dict(value.get("data") or {})),
-    }
     if not re.fullmatch(r"[a-z0-9_]+", domain) or not re.fullmatch(
         r"[a-z0-9_]+", service
     ):
@@ -2374,7 +2369,11 @@ def _validate_ha_action(value: Any) -> dict[str, Any]:
         value.get("data", {}), Mapping
     ):
         raise ValueError("action target and data must be objects")
-    return result
+    return {
+        "action": f"{domain}.{service}",
+        "target": _migrate_slot_templates(dict(value.get("target", {}))),
+        "data": _migrate_slot_templates(dict(value.get("data", {}))),
+    }
 
 
 def _validate_local_action(value: Any) -> dict[str, Any]:

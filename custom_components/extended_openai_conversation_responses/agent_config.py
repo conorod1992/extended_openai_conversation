@@ -6,6 +6,7 @@ from collections.abc import Iterable, Mapping
 from contextlib import suppress
 from copy import deepcopy
 from functools import lru_cache
+import math
 import re
 from types import MappingProxyType
 from typing import Any, cast
@@ -958,7 +959,7 @@ def validate_speech_regex_replacements(value: Any) -> list[dict[str, str]]:
             raise AgentConfigError(f"{field}.replacement", "is too long")
         try:
             compiled = re.compile(pattern)
-        except re.error as err:
+        except (re.error, OverflowError, RecursionError) as err:
             raise AgentConfigError(
                 f"{field}.pattern", f"invalid regular expression: {err}"
             ) from err
@@ -988,10 +989,12 @@ def _require_type(
 
 
 def validate_agent_sampling_values(config: Mapping[str, Any]) -> None:
-    """Require numeric types for configured sampling overrides, excluding booleans."""
-    for key in (CONF_TOP_P, CONF_TEMPERATURE):
-        if config.get(key) is not None:
+    """Validate sampling values shared by the editor and provider requests."""
+    for key, maximum in ((CONF_TOP_P, 1), (CONF_TEMPERATURE, 2)):
+        if (sampling := config.get(key)) is not None:
             _require_type(config, (key,), (int, float))
+            if not 0 <= sampling <= maximum:
+                raise AgentConfigError(key, f"must be 0 to {maximum}")
 
 
 def _coerce_legacy_numbers(config: dict[str, Any]) -> None:
@@ -1422,9 +1425,6 @@ def normalize_agent_config(
             CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
             f"must be 0 to {MAX_MEMORY_AUTO_RETRIEVE_LIMIT}",
         )
-    for key, maximum in ((CONF_TOP_P, 1), (CONF_TEMPERATURE, 2)):
-        if (sampling := result.get(key)) is not None and not 0 <= sampling <= maximum:
-            raise AgentConfigError(key, f"must be 0 to {maximum}")
     for key in (
         CONF_PROMPT,
         CONF_CURRENT_DATETIME_TEMPLATE,
@@ -1672,11 +1672,55 @@ def agent_config_model_repair_snapshot(
     Validate every other setting using private stand-ins, then restore
     the exact damaged values for the editor. Never cache this as validated data.
     """
-    damaged = {
-        key: data[key]
-        for key in (CONF_MAX_TOKENS, CONF_TEMPERATURE, CONF_TOP_P)
-        if isinstance(data.get(key), bool)
-    }
+    from .strict_json import replace_surrogates
+
+    def editable_number(value: Any) -> Any:
+        if value is None or isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return replace_surrogates(value)
+        if isinstance(value, int) and abs(value) <= 2**53 - 1:
+            return value
+        if isinstance(value, float) and math.isfinite(value):
+            return value
+        # Keep invalid values visible without breaking WebSocket serialization.
+        return replace_surrogates(str(value)) if isinstance(value, (int, float)) else ""
+
+    damaged: dict[str, Any] = {}
+    for key, minimum in (
+        (CONF_MAX_TOKENS, 1),
+        (CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION, 0),
+    ):
+        if key not in data:
+            continue
+        try:
+            if normalized_agent_integer(data, key, minimum) < minimum:
+                raise AgentConfigError(key, f"must be at least {minimum}")
+        except AgentConfigError, ValueError, OverflowError:
+            damaged[key] = editable_number(data[key])
+    for key in (CONF_TEMPERATURE, CONF_TOP_P):
+        if key not in data:
+            continue
+        scalar = {key: data[key]}
+        normalize_agent_numeric_values(scalar)
+        try:
+            validate_agent_sampling_values(scalar)
+        except AgentConfigError:
+            damaged[key] = editable_number(data[key])
+    if CONF_SPEECH_REGEX_REPLACEMENTS in data:
+        rules = data[CONF_SPEECH_REGEX_REPLACEMENTS]
+        try:
+            validate_speech_regex_replacements(rules)
+        except AgentConfigError:
+            damaged[CONF_SPEECH_REGEX_REPLACEMENTS] = [
+                {
+                    key: replace_surrogates(rule[key])
+                    if isinstance(rule, dict) and isinstance(rule.get(key), str)
+                    else ""
+                    for key in ("pattern", "replacement")
+                }
+                for rule in (rules if isinstance(rules, list) else [None])
+            ]
     model, effective_provider, efforts = _configuration_reasoning_context(
         data, provider
     )

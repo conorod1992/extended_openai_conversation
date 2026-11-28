@@ -434,8 +434,8 @@ async def _async_apply_speech_replacements(
         first = invalid[0]
         index = first[0] if isinstance(first, list) and first else None
         report(
-            f"Speech regex replacement {index} is invalid"
-            if type(index) is int and 1 <= index <= len(items)
+            f"Speech regex replacement {index + 1} is invalid"
+            if type(index) is int and 0 <= index < len(items)
             else "A speech regex replacement is invalid"
         )
         return text
