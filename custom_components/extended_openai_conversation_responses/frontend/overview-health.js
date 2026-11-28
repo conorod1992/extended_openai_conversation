@@ -75,7 +75,8 @@ function functionToolsCheck(facts) {
   const invalid = Number(tools.invalid_count || 0);
   const invalidGroups = Number(tools.invalid_group_count || 0);
   const usable = Number(tools.usable_count || 0);
-  const enabled = Number(tools.enabled_count || 0);
+  const count = Number(tools.effective_count ?? tools.enabled_count ?? 0);
+  const countLabel = `${count} ${count === 1 ? "function" : "functions"} ${tools.effective_count == null ? "individually enabled" : "available"}`;
   if (tools.validation_error && tools.isolatable === false) {
     return {
       id: "function_tools",
@@ -92,7 +93,7 @@ function functionToolsCheck(facts) {
       state: "warning",
       title: "Function Tools",
       value: `${invalid} ${invalid === 1 ? "function needs" : "functions need"} repair`,
-      detail: `${enabled} ${enabled === 1 ? "Function Tool is" : "Function Tools are"} available. Invalid tools remain unavailable until they are repaired.`,
+      detail: `${countLabel}. Invalid tools remain unavailable until they are repaired.`,
       action: action("capabilities", "functions"),
     };
   }
@@ -102,7 +103,7 @@ function functionToolsCheck(facts) {
       state: "warning",
       title: "Function Tools",
       value: `${invalidGroups} Function ${invalidGroups === 1 ? "Group needs" : "Groups need"} repair`,
-      detail: `${enabled} Function ${enabled === 1 ? "Tool is" : "Tools are"} available.`,
+      detail: `${countLabel}.`,
       action: action("capabilities", "functions"),
     };
   }
@@ -110,7 +111,7 @@ function functionToolsCheck(facts) {
     id: "function_tools",
     state: "ready",
     title: "Function Tools",
-    value: `${enabled} ${enabled === 1 ? "function" : "functions"} available`,
+    value: countLabel,
     detail: usable
       ? "All configured Function Tools pass validation."
       : "No custom Function Tools are currently configured.",

@@ -11,7 +11,7 @@ import logging
 import math
 from typing import Any
 
-from .usage import RequestUsage, extract_usage, is_usage_count
+from .usage import RequestUsage, extract_usage, is_usage_count, is_usage_detail_key
 
 _LOGGER = logging.getLogger(__name__)
 _TRAILING_USAGE_TIMEOUT = 0.2
@@ -108,7 +108,7 @@ def _reported_details(details: Any) -> Iterator[tuple[str, int]]:
         for name, value in details.items():
             if isinstance(supplied, set) and name not in supplied:
                 continue
-            if is_usage_count(value):
+            if is_usage_detail_key(name) and is_usage_count(value):
                 yield name, value
 
 

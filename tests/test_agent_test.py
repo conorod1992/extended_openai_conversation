@@ -1347,3 +1347,39 @@ async def test_guest_storage_failure_is_reported_and_model_probe_still_runs(monk
     assert checks["Guest Mode"].status == "Failed"
     assert checks["Model access"].status == "Passed"
     client.chat.completions.create.assert_awaited()
+
+
+async def test_provider_probe_accepts_a_non_strict_compatible_endpoint(monkeypatch):
+    _coverage_patch_common(monkeypatch)
+    monkeypatch.setattr(agent_test, "is_native_openai_connection", lambda *_a, **_kw: False)
+    monkeypatch.setattr(agent_test, "get_api_mode", lambda *_: API_MODE_CHAT_COMPLETIONS)
+    monkeypatch.setattr(agent_test, "extract_usage", lambda _raw: {})
+    create = _CoverageCreate(result=_chat_reply())
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create.create)))
+    entry = _coverage_entry(client)
+    entry.data["base_url"] = "https://provider.example/v1"
+
+    result = await async_test_agent(
+        cast(Any, SimpleNamespace()), cast(Any, entry),
+        cast(Any, _coverage_subentry(api_mode=API_MODE_CHAT_COMPLETIONS)),
+    )
+
+    assert result.status == "Passed", result.as_text()
+    assert "strict" not in create.calls[0]["tools"][0]["function"]
+
+
+async def test_guest_diagnostic_reports_pending_activation(monkeypatch):
+    hass, entry, subentry, _, usage = _objects()
+    monkeypatch.setattr(agent_test, "async_get_usage", AsyncMock(return_value=usage))
+    activation = "2026-11-29T10:00:00+00:00"
+    monkeypatch.setattr(
+        agent_test, "get_loaded_guest_mode",
+        lambda *_: SimpleNamespace(
+            status=lambda: {"state": "scheduled", "active_from": activation},
+            is_active=lambda: False,
+        ),
+    )
+    result = await async_test_agent(hass, entry, subentry)
+    guest = next(check for check in result.checks if check.name == "Guest Mode")
+    assert guest.status == "Passed"
+    assert guest.message == f"Scheduled for {activation}"

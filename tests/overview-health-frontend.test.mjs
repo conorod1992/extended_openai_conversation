@@ -270,3 +270,10 @@ assert.match(degradedMarkup,/Unknown Knowledge sources/);
 assert.match(degradedMarkup,/Knowledge Library could not be loaded/);
 assert.match(degradedMarkup,/Guest Mode could not be loaded/);
 assert.match(degradedMarkup,/data-subsection="home-assistant"/);
+
+
+const budgetDisabledCheck = buildSetupHealth({
+  ...defaultFacts,
+  function_tools: {enabled_count: 3, effective_count: 0, usable_count: 3},
+}).checks.find(check => check.id === "function_tools");
+assert.equal(budgetDisabledCheck.value, "0 functions available");

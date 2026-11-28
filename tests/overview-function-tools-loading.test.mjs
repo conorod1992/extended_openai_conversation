@@ -3,8 +3,9 @@ import {startOverviewDetailReads} from "../custom_components/extended_openai_con
 import {buildSetupHealth} from "../custom_components/extended_openai_conversation_responses/frontend/overview-health.js";
 
 const cases = [
-  [{usable_count:3, enabled_count:3, invalid_count:0}, "3 functions available"],
-  [{usable_count:0, enabled_count:0, invalid_count:0}, "0 functions available"],
+  [{usable_count:3, enabled_count:3, effective_count:3, invalid_count:0}, "3 functions available"],
+  [{usable_count:3, enabled_count:3, effective_count:0, invalid_count:0}, "0 functions available"],
+  [{usable_count:3, enabled_count:3, invalid_count:0}, "3 functions individually enabled"],
   [{usable_count:3, invalid_count:1, isolatable:true, validation_error:"Invalid tool"}, "1 function needs repair"],
   [{usable_count:0, invalid_count:0, isolatable:false, validation_error:"Invalid YAML"}, "Configuration needs repair"],
 ];
@@ -82,7 +83,7 @@ console.log("Overview Function Tools loading regressions passed.");
   const reads = startOverviewDetailReads(panel);
   pending.get("memory").resolve({setup_health:{memory:{mode:"automatic", available:true, failed:false, keyword_fallback:true, loading:false}}});
   pending.get("knowledge").resolve({setup_health:{knowledge:{enabled:true, available:true, repair_required:true, loading:false}}});
-  pending.get("setup_health").resolve({setup_health:{function_tools:{usable_count:0, enabled_count:0, invalid_count:0}, exposed_entity_count:0}});
+  pending.get("setup_health").resolve({setup_health:{function_tools:{usable_count:0, enabled_count:0, effective_count:0, invalid_count:0}, exposed_entity_count:0}});
   pending.get("usage").resolve({});
   pending.get("guest_mode").resolve({});
   await reads;

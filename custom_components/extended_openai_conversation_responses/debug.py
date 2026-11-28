@@ -308,11 +308,30 @@ def _event_has_text(event: Any) -> bool:
         "response.refusal.delta",
     } and _event_value(event, "delta"):
         return True
+    if event_type == "response.output_text.done":
+        return bool(_event_value(event, "text"))
+    if event_type == "response.refusal.done":
+        return bool(_event_value(event, "refusal"))
+    if event_type == "response.content_part.done":
+        return _responses_part_has_text(_event_value(event, "part"))
+    if event_type == "response.output_item.done":
+        item = _event_value(event, "item")
+        return _event_value(item, "type") == "message" and any(
+            _responses_part_has_text(part)
+            for part in _event_sequence(_event_value(item, "content"))
+        )
     return any(
         _event_value(_event_value(choice, "delta"), "content")
         or _event_value(_event_value(choice, "delta"), "refusal")
         for choice in _event_sequence(_event_value(event, "choices"))
     )
+
+
+def _responses_part_has_text(part: Any) -> bool:
+    kind = _event_value(part, "type")
+    if kind == "output_text":
+        return bool(_event_value(part, "text"))
+    return kind == "refusal" and bool(_event_value(part, "refusal"))
 
 
 def _event_has_action(event: Any) -> bool:

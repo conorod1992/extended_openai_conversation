@@ -2117,7 +2117,7 @@ async def test_overview_selected_agent_resolves_health_once(monkeypatch) -> None
     detail = await loading.async_overview_detail(
         hass, entry, subentry, is_admin=True, kind="setup_health"
     )
-    assert detail["setup_health"]["function_tools"] == health
+    assert detail["setup_health"]["function_tools"] == {**health, "effective_count": 3}
     assert detail["setup_health"]["exposed_entity_count"] == 4
     projection.assert_called_once_with(dict(subentry.data))
 

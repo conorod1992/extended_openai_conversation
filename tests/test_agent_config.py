@@ -730,3 +730,13 @@ def test_agent_title_contract_is_shared_and_bounded() -> None:
         validate_agent_title("   ")
     with pytest.raises(AgentConfigError, match="at most 255"):
         validate_agent_title("x" * (MAX_AGENT_TITLE_LENGTH + 1))
+
+
+@pytest.mark.parametrize("provider", ["openai", "azure"])
+@pytest.mark.parametrize("blank", ["", " \t"])
+def test_rejects_blank_model_or_azure_deployment(provider, blank):
+    config = {**agent_config_defaults(), "chat_model": blank}
+    if provider == "azure":
+        config["azure_model"] = "gpt-4.1"
+    with pytest.raises(AgentConfigError, match="nonempty model or deployment"):
+        normalize_agent_config(config, provider=provider)

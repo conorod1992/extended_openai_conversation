@@ -370,3 +370,15 @@ async def test_chat_stream_traces_usage_attached_to_normal_choice(
     )
     assert usage.context_tokens == 12
     assert traces == [{"stats": {"input_tokens": 12, "output_tokens": 3}}]
+
+
+def test_streamed_detail_merge_rejects_surrogates_and_keeps_valid_zero_corrections():
+    target = RequestTokenMeasurements()
+    _capture_provider_usage(
+        target, {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 2}}
+    )
+    _capture_provider_usage(
+        target, {"input_tokens_details": {"cached_tokens": 0, "broken_\ud800": 8}}
+    )
+    assert target.reported.cached_input_tokens == 0
+    assert target.reported.details == {}

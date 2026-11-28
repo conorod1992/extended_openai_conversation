@@ -306,17 +306,19 @@ async def async_test_agent(
             configured_tools,
         )
         policy = guest_policy.as_diagnostics()
+        guest_message = str(guest_status["state"]).replace("_", " ").title()
+        if guest_policy.guest_active:
+            guest_message += (
+                f"; {policy['readable_entity_count'] or 0} visible entities"
+                f"; {policy['configured_tool_count'] or 0} custom tools"
+            )
+        elif guest_status["state"] == "scheduled" and guest_status.get("active_from"):
+            guest_message += f" for {guest_status['active_from']}"
         checks.append(
             _check(
                 "Guest Mode",
                 "Passed",
-                (
-                    f"{str(guest_status['state']).replace('_', ' ').title()}; "
-                    f"{policy['readable_entity_count'] or 0} visible entities; "
-                    f"{policy['configured_tool_count'] or 0} custom tools"
-                    if guest_policy.guest_active
-                    else "Inactive"
-                ),
+                guest_message,
             )
         )
     except Exception:
@@ -438,7 +440,7 @@ async def async_test_agent(
             _check("Function calling", "Skipped", "Not required by this agent")
         )
 
-    noop_tool = {
+    noop_tool: dict[str, Any] = {
         "type": "function",
         "name": "configuration_test_noop",
         "description": "Schema-only compatibility test; never execute this function.",
@@ -447,8 +449,11 @@ async def async_test_agent(
             "properties": {},
             "additionalProperties": False,
         },
-        "strict": True,
     }
+    if usage_provider == "azure" or is_native_openai_connection(
+        entry.data, client=client
+    ):
+        noop_tool["strict"] = True
     usage_manager = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
     probe_budget_exhausted = False
     probe_usage = None

@@ -858,3 +858,25 @@ async def test_endpoint_proxy_leaves_stream_untouched_without_active_trace() -> 
     proxy = debug._DebugEndpointProxy(_ResidualEndpoint(stream), "responses")
 
     assert await proxy.create(input="hello") is stream
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        {"type": "response.output_text.done", "text": "answer"},
+        {"type": "response.refusal.done", "refusal": "answer"},
+        {"type": "response.content_part.done", "part": {"type": "output_text", "text": "answer"}},
+        {
+            "type": "response.output_item.done",
+            "item": {"type": "message", "content": [{"type": "refusal", "refusal": "answer"}]},
+        },
+    ],
+)
+def test_first_text_tracks_responses_snapshots_before_the_terminal_event(snapshot):
+    manager = DebugManager()
+    manager.configure(enabled=True, limit=5)
+    provider = _begin(manager).start_provider_request("responses", (), {})
+    provider.add_event({"type": "response.output_text.done", "text": ""})
+    assert provider.first_text_ms is None
+    provider.add_event(snapshot)
+    assert provider.first_text_ms is not None

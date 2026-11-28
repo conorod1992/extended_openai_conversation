@@ -1347,6 +1347,10 @@ def normalize_agent_config(
         ),
         str,
     )
+    if CONF_CHAT_MODEL in result and not result[CONF_CHAT_MODEL].strip():
+        raise AgentConfigError(
+            CONF_CHAT_MODEL, "must be a nonempty model or deployment name"
+        )
     _require_type(
         result,
         (

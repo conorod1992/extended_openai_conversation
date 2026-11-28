@@ -280,6 +280,11 @@ def is_usage_count(value: object) -> TypeGuard[int]:
     )
 
 
+def is_usage_detail_key(value: object) -> TypeGuard[str]:
+    """Accept provider detail names that can be persisted as JSON keys."""
+    return isinstance(value, str) and not has_surrogate(value)
+
+
 def add_usage_counts(current: int, increment: int) -> int:
     """Keep accumulated Usage counters serializable without resetting prior counts."""
     return min(_MAX_USAGE_COUNT, current + increment)
@@ -401,11 +406,7 @@ def extract_usage(usage: Any) -> RequestUsage:
             detail_source = vars(detail_source)
         if isinstance(detail_source, dict):
             for key, value in detail_source.items():
-                if (
-                    isinstance(key, str)
-                    and not has_surrogate(key)
-                    and (amount := _integer(value))
-                ):
+                if is_usage_detail_key(key) and (amount := _integer(value)):
                     details[f"{prefix}_{key}"] = amount
     return RequestUsage(
         input_tokens,

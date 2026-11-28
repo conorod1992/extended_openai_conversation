@@ -2157,12 +2157,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _setupGuestSelectors() {
     const result = this._result || {};
-    const select = (items, value, label) => ({select: {multiple: true, custom_value: false, options: items.map((item) => ({value: value(item), label: label(item)}))}});
+    const select = (items, value, label, customValue = false) => ({select: {multiple: true, custom_value: customValue, options: items.map((item) => ({value: value(item), label: label(item)}))}});
     this.shadowRoot.querySelectorAll("ha-selector[data-guest-key]").forEach((element) => {
       const type = element.dataset.guestSelector;
       element.hass = this.hass;
       element.value = this._guestDraft?.[element.dataset.guestKey] || [];
-      element.selector = type === "entity" ? {entity: {multiple: true}} : type === "area" ? {area: {multiple: true}} : type === "label" ? {label: {multiple: true}} : type === "domain" ? select(result.domains || [], (item) => item, (item) => item) : type === "knowledge" ? select(result.knowledge_sources || [], (item) => item.source_id, (item) => `${item.title} — ${item.description || "No description"}`) : type === "group" ? select(result.function_groups || [], (item) => item.id, (item) => `${item.name} — ${item.description}`) : select((result.functions || []).filter((item) => !item.unsafe_in_guest_mode), (item) => item.name, (item) => `${item.name}${item.enabled ? "" : " (disabled)"} — ${item.description || "No description"}`);
+      element.selector = type === "entity" ? {entity: {multiple: true}} : type === "area" ? {area: {multiple: true}} : type === "label" ? {label: {multiple: true}} : type === "domain" ? select(result.domains || [], (item) => item, (item) => item, true) : type === "knowledge" ? select(result.knowledge_sources || [], (item) => item.source_id, (item) => `${item.title} — ${item.description || "No description"}`) : type === "group" ? select(result.function_groups || [], (item) => item.id, (item) => `${item.name} — ${item.description}`) : select((result.functions || []).filter((item) => !item.unsafe_in_guest_mode), (item) => item.name, (item) => `${item.name}${item.enabled ? "" : " (disabled)"} — ${item.description || "No description"}`);
       element.addEventListener("value-changed", (event) => {
         if (!this._guestDraft) return;
         this._guestDraft[element.dataset.guestKey] = event.detail.value || [];

@@ -22,7 +22,7 @@ from homeassistant.components import panel_custom, websocket_api
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import service as service_helper
+from homeassistant.helpers import entity_registry as er, service as service_helper
 
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
@@ -71,6 +71,8 @@ from .const import (
     CONF_FUNCTION_TOOLS,
     CONF_GUEST_ALLOWED_FUNCTION_NAMES,
     CONF_GUEST_ALLOWED_GROUP_IDS,
+    CONF_GUEST_CONTROL_EXCLUDED_DOMAINS,
+    CONF_GUEST_EXCLUDED_DOMAINS,
     CONF_GUEST_MODE_ENABLED,
     CONF_GUEST_POLICY_VERSION,
     CONF_KNOWLEDGE_ENABLED,
@@ -1130,6 +1132,10 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
                     details_result["knowledge_catalogue_unavailable"] = True
             knowledge_list_ms = _elapsed_ms(phase)
 
+            registry = hass.data.get(er.DATA_REGISTRY)
+            registered_entities = (
+                registry.entities.values() if registry is not None else ()
+            )
             details_result.update(
                 {
                     "functions": [
@@ -1156,6 +1162,16 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
                             item["entity_id"].partition(".")[0]
                             for item in exposed_entities or ()
                             if isinstance(item.get("entity_id"), str)
+                        }
+                        | {entity.domain for entity in registered_entities}
+                        | {
+                            domain
+                            for key in (
+                                CONF_GUEST_EXCLUDED_DOMAINS,
+                                CONF_GUEST_CONTROL_EXCLUDED_DOMAINS,
+                            )
+                            for domain in (subentry.data.get(key) or ())
+                            if isinstance(domain, str)
                         }
                     ),
                 }

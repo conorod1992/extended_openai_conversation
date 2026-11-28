@@ -539,6 +539,7 @@ async def async_overview_detail(
                 options, tools, groups, assume_ha_available=True
             )
         )
+        health["effective_count"] = effective_count
         group_repair, _ = repair_state_for_projection(
             persisted_config_projection(subentry)
         )

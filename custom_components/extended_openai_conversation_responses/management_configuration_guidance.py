@@ -21,7 +21,7 @@ from .const import (
 )
 from .exposed_attributes import exposed_attribute_catalog
 from .helpers import effective_api_provider, is_native_openai_connection
-from .request import build_provider_request_snapshot
+from .request import build_provider_request_snapshot, conversation_tools_required
 from .skill_availability import SkillLoaderStatus, skill_loader_configuration_status
 
 _CONFIGURATION_ACTIONS = {"get", "validate", "update", "save"}
@@ -79,31 +79,38 @@ def configuration_guidance_snapshot(
     configured_api_mode = str(options.get(CONF_API_MODE, DEFAULT_API_MODE))
     effective_api_mode = configured_api_mode
     hosted_tools_supported = is_native_openai_connection(entry_data, client=client)
+    tools_required = conversation_tools_required(options)
+    with suppress(HomeAssistantError):
+        effective_api_mode = build_provider_request_snapshot(
+            options, entry_data, tools_required=tools_required, client=client
+        ).api_mode
 
-    # This is the production resolver with only the hosted feature forced on.
+    # Check the hypothetical feature without changing the current route.
     probe = dict(options)
     probe[CONF_WEB_SEARCH] = True
     web_search_available = True
     web_search_message: str | None = None
     try:
-        effective_api_mode = build_provider_request_snapshot(
-            probe, entry_data, client=client
-        ).api_mode
+        build_provider_request_snapshot(
+            probe, entry_data, tools_required=tools_required, client=client
+        )
     except HomeAssistantError as err:
         web_search_available = False
         web_search_message = str(err)
+    compatibility_mode = effective_api_mode
+    if not web_search_available:
         with suppress(HomeAssistantError):
-            effective_api_mode = build_provider_request_snapshot(
+            compatibility_mode = build_provider_request_snapshot(
                 {**options, CONF_WEB_SEARCH: False},
                 entry_data,
-                tools_required=True,
+                tools_required=tools_required,
                 client=client,
             ).api_mode
 
     reason: str | None
     if web_search_available:
         reason = None
-    elif effective_api_mode != API_MODE_RESPONSES:
+    elif compatibility_mode != API_MODE_RESPONSES:
         reason = "requires_responses"
     elif not hosted_tools_supported:
         reason = "direct_openai_only"

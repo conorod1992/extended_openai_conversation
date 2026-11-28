@@ -1755,3 +1755,29 @@ async def test_websocket_and_setup_wiring(monkeypatch) -> None:
     module_url = register_panel.await_args.kwargs["module_url"]
     assert module_url.startswith(f"/{DOMAIN}/frontend/assets/management-")
     assert module_url.endswith(".js")
+
+
+async def test_guest_domains_include_unexposed_registry_entries_and_saved_domains(monkeypatch):
+    from homeassistant.helpers import entity_registry
+
+    entry, subentry = _residual_entry_pair()
+    subentry.data["guest_excluded_domains"] = ["lock"]
+    hass = _residual_hass(entry)
+    monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
+    monkeypatch.setattr(management_ui, "get_exposed_entities", lambda *_: [])
+    monkeypatch.setattr(management_ui, "resolve_guest_policy", lambda *_a, **_kw:
+        SimpleNamespace(as_diagnostics=lambda: {"guest_active": False}))
+    monkeypatch.setattr(management_ui, "async_get_guest_mode", AsyncMock())
+    hass.data[entity_registry.DATA_REGISTRY] = SimpleNamespace(
+        entities={"camera.porch": SimpleNamespace(domain="camera")}
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "async_get_knowledge",
+        AsyncMock(return_value=SimpleNamespace(async_list=AsyncMock(return_value=[]))),
+    )
+
+    details = await management_ui.async_management_command(
+        hass, "admin", True, _residual_message("guest_mode", "details")
+    )
+    assert details["domains"] == ["camera", "lock"]

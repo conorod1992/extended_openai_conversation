@@ -186,3 +186,15 @@ def test_debug_trace_page_clamps_provider_window_and_missing_id() -> None:
     assert provider["returned"] == min(
         7, projection.MANAGEMENT_DEBUG_PROVIDER_PAGE_MAX
     )
+
+
+def test_debug_summary_saturates_counts_before_home_assistant_serialization():
+    import orjson
+
+    manager, _ = _captured_manager()
+    maximum = (1 << 64) - 1
+    for request in manager._runs[0].provider_requests:
+        request.usage = {"input_tokens": maximum, "total_tokens": maximum}
+    [summary] = debug_run_summaries(manager)
+    assert summary["input_tokens"] == summary["total_tokens"] == maximum
+    assert orjson.loads(orjson.dumps(summary))["total_tokens"] == maximum

@@ -20,6 +20,7 @@ from .request_diagnostics import (
     summary_diagnostics,
     trace_diagnostics,
 )
+from .usage import add_usage_counts
 
 _TRUNCATED_TEXT = "<management debug value truncated>"
 _MAX_CONTAINER_ITEMS = 256
@@ -140,7 +141,7 @@ def _summary(trace: Any) -> dict[str, Any]:
     }
     for request in trace.provider_requests:
         for key in usage:
-            usage[key] += int(request.usage.get(key, 0))
+            usage[key] = add_usage_counts(usage[key], int(request.usage.get(key, 0)))
     error, error_meta = _bounded_value(
         trace.error, MANAGEMENT_DEBUG_SUMMARY_VALUE_CHARACTERS
     )

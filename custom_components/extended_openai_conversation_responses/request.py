@@ -692,6 +692,8 @@ def build_provider_request_snapshot(
     options = dict(options)
     normalize_agent_numeric_values(options)
     model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
+    if not model.strip():
+        raise HomeAssistantError("A model or deployment name is required")
     provider = effective_api_provider(
         entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
     )
